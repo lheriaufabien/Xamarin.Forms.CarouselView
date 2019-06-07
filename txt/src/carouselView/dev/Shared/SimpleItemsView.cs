@@ -4,229 +4,248 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Reflection;
+using Xamarin.Forms;
 
-namespace Xamarin.Forms
+/* Classe rapatriée du package Xamarin.Forms.CarouselView v2.3.0-pre2
+ * Tout en faisant la mise à jour, on évite d'utiliser le CarouselView de
+ * Xamarin.Forms v3.6 car il est basé sur CollectionView qui est encore experimental.
+ */
+
+namespace CarouselViewForms
 {
-	public abstract class ItemsView : View, IItemViewController
-	{
-		public static readonly BindableProperty ItemsSourceProperty =
-			BindableProperty.Create(
-				propertyName: "ItemsSource",
-				returnType: typeof(IEnumerable),
-				declaringType: typeof(ItemsView),
-				propertyChanging: (b, o, n) => ((ItemsView)b).OnItemsSourceChanging((IEnumerable)o, (IEnumerable)n)
-			);
+    public abstract class ItemView : View, IItemViewController
+    {
+        private ItemsSourceProxy _itemSourceProxy;
+        private NotifyCollectionChangedEventHandler _onCollectionChanged;
+        private NotifyCollectionChangedEventHandler _onCollectionChangedProxy;
+        public static readonly BindableProperty ItemsSourceProperty =
+                                    BindableProperty.Create(
+                propertyName: "ItemsSource",
+                returnType: typeof(IEnumerable),
+                declaringType: typeof(ItemView),
+                propertyChanging: (b, o, n) => ((ItemView)b).OnItemsSourceChanging((IEnumerable)o, (IEnumerable)n)
+            );
 
-		public static readonly BindableProperty ItemTemplateProperty =
-			BindableProperty.Create(
-				propertyName: "ItemTemplate",
-				returnType: typeof(DataTemplate),
-				declaringType: typeof(ItemsView)
-			);
+        public static readonly BindableProperty ItemTemplateProperty =
+            BindableProperty.Create(
+                propertyName: "ItemTemplate",
+                returnType: typeof(DataTemplate),
+                declaringType: typeof(ItemView)
+            );
 
-		ItemsSourceProxy _itemSourceProxy;
-		NotifyCollectionChangedEventHandler _onCollectionChanged;
-		NotifyCollectionChangedEventHandler _onCollectionChangedProxy;
+        internal event NotifyCollectionChangedEventHandler CollectionChanged;
 
-		public ItemsView()
-		{
-			_onCollectionChanged = _onCollectionChangedProxy = OnCollectionChanged;
+        private IItemViewController Controller => this;
 
-			_itemSourceProxy = new ItemsSourceProxy(
-				itemsSource: Enumerable.Empty<object>(),
-				itemsSourceAsList: OnInitializeItemSource(),
-				onCollectionChanged: new WeakReference<NotifyCollectionChangedEventHandler>(_onCollectionChangedProxy)
-			);
-		}
+        public IEnumerable ItemsSource
+        {
+            get
+            {
+                return (IEnumerable)GetValue(ItemsSourceProperty);
+            }
+            set
+            {
+                SetValue(ItemsSourceProperty, value);
+            }
+        }
 
-		public IEnumerable ItemsSource
-		{
-			get
-			{
-				return (IEnumerable)GetValue(ItemsSourceProperty);
-			}
-			set
-			{
-				SetValue(ItemsSourceProperty, value);
-			}
-		}
-		public DataTemplate ItemTemplate
-		{
-			get
-			{
-				return (DataTemplate)GetValue(ItemTemplateProperty);
-			}
-			set
-			{
-				SetValue(ItemTemplateProperty, value);
-			}
-		}
+        public DataTemplate ItemTemplate
+        {
+            get
+            {
+                return (DataTemplate)GetValue(ItemTemplateProperty);
+            }
+            set
+            {
+                SetValue(ItemTemplateProperty, value);
+            }
+        }
 
-		protected abstract IReadOnlyList<object> OnInitializeItemSource();
-		protected abstract IReadOnlyList<object> OnItemsSourceChanging(
-			IReadOnlyList<object> itemSource,
-			ref NotifyCollectionChangedEventHandler collectionChanged);
-		internal virtual void OnItemsSourceChanged(IEnumerable oldValue, IEnumerable newValue)
-		{
-		}
-		protected virtual DataTemplate GetDataTemplate(object item) => null;
+        int IItemViewController.Count => _itemSourceProxy.Count;
 
-		internal event NotifyCollectionChangedEventHandler CollectionChanged;
-		internal void OnItemsSourceChanging(IEnumerable oldValue, IEnumerable newValue)
-		{
-			// wrap up enumerable, IList, IList<T>, and IReadOnlyList<T>
-			var itemSourceAsList = newValue?.ToReadOnlyList();
+        public ItemView()
+        {
+            _onCollectionChanged = _onCollectionChangedProxy = OnCollectionChanged;
 
-			// allow interception of itemSource
-			var onCollectionChanged = _onCollectionChanged;
-			itemSourceAsList = OnItemsSourceChanging(itemSourceAsList, ref onCollectionChanged);
-			if(itemSourceAsList == null)
-				throw new InvalidOperationException(
-					"OnItemsSourceChanging must return non-null itemSource as IReadOnlyList");
+            _itemSourceProxy = new ItemsSourceProxy(
+                itemsSource: Enumerable.Empty<object>(),
+                itemsSourceAsList: OnInitializeItemSource(),
+                onCollectionChanged: new WeakReference<NotifyCollectionChangedEventHandler>(_onCollectionChangedProxy)
+            );
+        }
 
-			// keep callback alive
-			_onCollectionChangedProxy = onCollectionChanged;
+        private void OnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (CollectionChanged != null)
+                CollectionChanged(sender, e);
+        }
 
-			// dispatch CollectionChangedEvent to ItemView without a strong reference to ItemView and
-			// synchronize dispatch and element access via CollectionSynchronizationContext protocol
-			_itemSourceProxy?.Dispose();
-			_itemSourceProxy = new ItemsSourceProxy(
-				itemsSource: newValue,
-				itemsSourceAsList: itemSourceAsList,
-				onCollectionChanged: new WeakReference<NotifyCollectionChangedEventHandler>(_onCollectionChangedProxy)
-			);
+        protected abstract IReadOnlyList<object> OnInitializeItemSource();
 
-			OnItemsSourceChanged(oldValue, newValue);
-		}
+        protected abstract IReadOnlyList<object> OnItemsSourceChanging(
+            IReadOnlyList<object> itemSource,
+            ref NotifyCollectionChangedEventHandler collectionChanged);
 
-		void OnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
-		{
-			if(CollectionChanged != null)
-				CollectionChanged(sender, e);
-		}
-		
-		int IItemViewController.Count => _itemSourceProxy.Count;
-		void IItemViewController.BindView(View view, object item) => view.BindingContext = item;
-		object IItemViewController.GetItem(int index) => _itemSourceProxy[index];
-		View IItemViewController.CreateView(object type)
-		{
-			object content = ((DataTemplate)type).CreateContent();
-			var view = content as View;
-			if(view == null)
-				throw new InvalidOperationException($"DataTemplate returned non-view content: '{content}'.");
+        protected virtual DataTemplate GetDataTemplate(object item) => null;
 
-			view.Parent = this;
-			return view;
-		}
-		object IItemViewController.GetItemType(object item)
-		{
-			// allow interception of DataTemplate resolution
-			var dataTemplate = GetDataTemplate(item);
-			if(dataTemplate != null)
-				return dataTemplate;
+        internal virtual void OnItemsSourceChanged(IEnumerable oldValue, IEnumerable newValue)
+        {
+        }
 
-			// resolve DataTemplate (possibly via DataTemplateSelector)
-			dataTemplate = ItemTemplate;
-			var dataTemplateSelector = dataTemplate as DataTemplateSelector;
-			if(dataTemplateSelector != null)
-				dataTemplate = dataTemplateSelector.SelectTemplate(item, this);
+        internal void OnItemsSourceChanging(IEnumerable oldValue, IEnumerable newValue)
+        {
+            // wrap up enumerable, IList, IList<T>, and IReadOnlyList<T>
+            var itemSourceAsList = newValue?.ToReadOnlyList();
 
-			if(item == null)
-				throw new ArgumentException($"No DataTemplate resolved for item: '{item}'.");
+            // allow interception of itemSource
+            var onCollectionChanged = _onCollectionChanged;
+            itemSourceAsList = OnItemsSourceChanging(itemSourceAsList, ref onCollectionChanged);
+            if (itemSourceAsList == null)
+                throw new InvalidOperationException(
+                    "OnItemsSourceChanging must return non-null itemSource as IReadOnlyList");
 
-			return dataTemplate;
-		}
+            // keep callback alive
+            _onCollectionChangedProxy = onCollectionChanged;
 
-		IItemViewController Controller => this;
+            // dispatch CollectionChangedEvent to ItemView without a strong reference to ItemView and
+            // synchronize dispatch and element access via CollectionSynchronizationContext protocol
+            _itemSourceProxy?.Dispose();
+            _itemSourceProxy = new ItemsSourceProxy(
+                itemsSource: newValue,
+                itemsSourceAsList: itemSourceAsList,
+                onCollectionChanged: new WeakReference<NotifyCollectionChangedEventHandler>(_onCollectionChangedProxy)
+            );
 
-		sealed class ItemsSourceProxy : IDisposable
-		{
-			readonly object _itemsSource;
-			readonly IReadOnlyList<object> _itemsSourceAsList;
-			readonly WeakReference<NotifyCollectionChangedEventHandler> _onCollectionChanged;
+            OnItemsSourceChanged(oldValue, newValue);
+        }
 
-			internal ItemsSourceProxy(
-				object itemsSource,
-				IReadOnlyList<object> itemsSourceAsList,
-				WeakReference<NotifyCollectionChangedEventHandler> onCollectionChanged)
-			{
-				_itemsSource = itemsSource;
-				_itemsSourceAsList = itemsSourceAsList;
-				_onCollectionChanged = onCollectionChanged;
+        void IItemViewController.BindView(View view, object item) => view.BindingContext = item;
 
-				var dynamicItemSource = itemsSource as INotifyCollectionChanged;
-				if(dynamicItemSource == null)
-					return;
+        object IItemViewController.GetItem(int index) => _itemSourceProxy[index];
 
-				dynamicItemSource.CollectionChanged += SynchronizeOnCollectionChanged;
-			}
+        View IItemViewController.CreateView(object type)
+        {
+            object content = ((DataTemplate)type).CreateContent();
+            var view = content as View;
+            if (view == null)
+                throw new InvalidOperationException($"DataTemplate returned non-view content: '{content}'.");
 
-			public int Count => _itemsSourceAsList.Count;
-			public object this[int index]
-			{
-				get
-				{
-					// Device.IsInvokeRequired will be false
+            view.Parent = this;
+            return view;
+        }
 
-					if (SyncContext != null)
-					{
-						object value = null;
-						Synchronize(() => value = _itemsSourceAsList[index]);
-						return value;
-					}
+        object IItemViewController.GetItemType(object item)
+        {
+            // allow interception of DataTemplate resolution
+            var dataTemplate = GetDataTemplate(item);
+            if (dataTemplate != null)
+                return dataTemplate;
 
-					return _itemsSourceAsList[index];
-				}
-			}
-			public void Dispose()
-			{
-				_onCollectionChanged.SetTarget(null);
-			}
+            // resolve DataTemplate (possibly via DataTemplateSelector)
+            dataTemplate = ItemTemplate;
+            var dataTemplateSelector = dataTemplate as DataTemplateSelector;
+            if (dataTemplateSelector != null)
+                dataTemplate = dataTemplateSelector.SelectTemplate(item, this);
 
-			CollectionSynchronizationContext SyncContext
-			{
-				get
-				{
-					if (_itemsSource == null)
-						return null;
+            if (item == null)
+                throw new ArgumentException($"No DataTemplate resolved for item: '{item}'.");
 
-					CollectionSynchronizationContext syncContext;
-					BindingBase.TryGetSynchronizedCollection((IEnumerable)_itemsSource, out syncContext);
-					return syncContext;
-				}
-			}
-			void Synchronize(Action action)
-			{
-				MethodInfo callbackMethod = SyncContext.GetType().GetRuntimeMethod("Callback", new Type[] { typeof(IEnumerable), typeof(Action) });
-				callbackMethod.Invoke(SyncContext, new object[] { _itemsSource, action });
-			}
-			void SynchronizeOnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
-			{
-				if (SyncContext != null)
-				{
-					Synchronize(() => OnCollectionChanged(sender, e));
-					return;
-				}
+            return dataTemplate;
+        }
 
-				OnCollectionChanged(sender, e);
-			}
-			void OnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
-			{
-				if (Device.IsInvokeRequired)
-				{
-					Device.BeginInvokeOnMainThread(() => OnCollectionChanged(sender, e));
-					return;
-				}
+        private sealed class ItemsSourceProxy : IDisposable
+        {
+            private readonly object _itemsSource;
+            private readonly IReadOnlyList<object> _itemsSourceAsList;
+            private readonly WeakReference<NotifyCollectionChangedEventHandler> _onCollectionChanged;
 
-				NotifyCollectionChangedEventHandler onCollectionChanged;
-				if(!_onCollectionChanged.TryGetTarget(out onCollectionChanged)) {
-					var dynamicItemSource = (INotifyCollectionChanged)_itemsSource;
-					dynamicItemSource.CollectionChanged -= SynchronizeOnCollectionChanged;
-					return;
-				}
+            private CollectionSynchronizationContext SyncContext
+            {
+                get
+                {
+                    if (_itemsSource == null)
+                        return null;
 
-				onCollectionChanged(sender, e);
-			}
-		}
-	}
+                    BindingBase.TryGetSynchronizedCollection((IEnumerable)_itemsSource, out CollectionSynchronizationContext syncContext);
+                    return syncContext;
+                }
+            }
+
+            public int Count => _itemsSourceAsList.Count;
+
+            public object this[int index]
+            {
+                get
+                {
+                    // Device.IsInvokeRequired will be false
+
+                    if (SyncContext != null)
+                    {
+                        object value = null;
+                        Synchronize(() => value = _itemsSourceAsList[index]);
+                        return value;
+                    }
+
+                    return _itemsSourceAsList[index];
+                }
+            }
+
+            internal ItemsSourceProxy(
+                                                    object itemsSource,
+                IReadOnlyList<object> itemsSourceAsList,
+                WeakReference<NotifyCollectionChangedEventHandler> onCollectionChanged)
+            {
+                _itemsSource = itemsSource;
+                _itemsSourceAsList = itemsSourceAsList;
+                _onCollectionChanged = onCollectionChanged;
+
+                var dynamicItemSource = itemsSource as INotifyCollectionChanged;
+                if (dynamicItemSource == null)
+                    return;
+
+                dynamicItemSource.CollectionChanged += SynchronizeOnCollectionChanged;
+            }
+
+            private void Synchronize(Action action)
+            {
+                MethodInfo callbackMethod = SyncContext.GetType().GetRuntimeMethod("Callback", new Type[] { typeof(IEnumerable), typeof(Action) });
+                callbackMethod.Invoke(SyncContext, new object[] { _itemsSource, action });
+            }
+
+            private void SynchronizeOnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+            {
+                if (SyncContext != null)
+                {
+                    Synchronize(() => OnCollectionChanged(sender, e));
+                    return;
+                }
+
+                OnCollectionChanged(sender, e);
+            }
+
+            private void OnCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+            {
+                if (Device.IsInvokeRequired)
+                {
+                    Device.BeginInvokeOnMainThread(() => OnCollectionChanged(sender, e));
+                    return;
+                }
+
+                NotifyCollectionChangedEventHandler onCollectionChanged;
+                if (!_onCollectionChanged.TryGetTarget(out onCollectionChanged))
+                {
+                    var dynamicItemSource = (INotifyCollectionChanged)_itemsSource;
+                    dynamicItemSource.CollectionChanged -= SynchronizeOnCollectionChanged;
+                    return;
+                }
+
+                onCollectionChanged(sender, e);
+            }
+
+            public void Dispose()
+            {
+                _onCollectionChanged.SetTarget(null);
+            }
+        }
+    }
 }
